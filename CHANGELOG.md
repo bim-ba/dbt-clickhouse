@@ -1,5 +1,8 @@
 ### Unreleased
 
+#### Improvements
+* A `dictionary` model with an enforced contract can omit `fields`; its structure is then taken from its YAML columns and their `data_type`. An enforced contract is now also checked for a dictionary that reads the model's query, so a contracted dictionary whose YAML columns do not match the query fails, as a table does ([#TBD](https://github.com/ClickHouse/dbt-clickhouse/pull/TBD)).
+
 #### Repository maintenance
 * The shard-local table name of distributed materializations is now resolved in one place, `clickhouse_local_relation`, instead of being rebuilt inline in each materialization and incremental strategy ([#753](https://github.com/ClickHouse/dbt-clickhouse/pull/753)).
 

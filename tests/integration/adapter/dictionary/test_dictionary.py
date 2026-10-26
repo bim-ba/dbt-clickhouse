@@ -235,6 +235,47 @@ models:
 """
 
 
+COLUMNS_DICTIONARY = """
+{{ config(
+       materialized='dictionary',
+       primary_key='id',
+       layout='HASHED()',
+       lifetime='1',
+) }}
+
+select id, name from {{ source('raw', 'people') }}
+"""
+
+
+COLUMNS_TABLE_DICTIONARY = """
+{{ config(
+       materialized='dictionary',
+       primary_key='id',
+       layout='HASHED()',
+       lifetime='1',
+       source_type='clickhouse',
+       table='people'
+) }}
+
+select 1
+"""
+
+
+def columns_dictionary_schema(id_type="Int32", contract=True):
+    contract_config = "\n    config:\n      contract:\n        enforced: true" if contract else ""
+    return f"""
+version: 2
+
+models:
+  - name: columns_dictionary{contract_config}
+    columns:
+      - name: id
+        data_type: {id_type}
+      - name: name
+        data_type: String
+"""
+
+
 class TestQueryDictionary:
     @pytest.fixture(scope="class")
     def seeds(self):
@@ -427,3 +468,97 @@ class TestDocumentedDictionary:
             fetch="one",
         )
         assert result[0] == "People by id"
+
+
+class TestColumnsDictionary:
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {
+            "people.csv": PEOPLE_SEED_CSV,
+            "schema.yml": SEED_SCHEMA_YML,
+        }
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {
+            "columns_dictionary.sql": COLUMNS_DICTIONARY,
+            "schema.yml": columns_dictionary_schema(),
+        }
+
+    def test_create(self, project):
+        run_dbt(["seed"])
+        run_dbt()
+
+        result = project.run_sql(
+            "select key.names, attribute.names, attribute.types from system.dictionaries "
+            f"where database = '{project.test_schema}' and name = 'columns_dictionary'",
+            fetch="one",
+        )
+        assert result == (["id"], ["name"], ["String"])
+        results = project.run_sql("select distinct name from columns_dictionary", fetch="all")
+        assert set(i[0] for i in results) == set(["Dade", "Kate", "Ksenia"])
+
+
+class TestColumnsDictionaryContractMismatch:
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {
+            "people.csv": PEOPLE_SEED_CSV,
+            "schema.yml": SEED_SCHEMA_YML,
+        }
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {
+            "columns_dictionary.sql": COLUMNS_DICTIONARY,
+            "schema.yml": columns_dictionary_schema(id_type="UInt64"),
+        }
+
+    def test_query_type_other_than_yaml_fails(self, project):
+        run_dbt(["seed"])
+        result = run_dbt(expect_pass=False)
+        assert "enforced contract that failed" in result.results[0].message
+
+
+class TestUncontractedColumnsDictionary:
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {
+            "people.csv": PEOPLE_SEED_CSV,
+            "schema.yml": SEED_SCHEMA_YML,
+        }
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {
+            "columns_dictionary.sql": COLUMNS_DICTIONARY,
+            "schema.yml": columns_dictionary_schema(contract=False),
+        }
+
+    def test_without_fields_or_contract_fails(self, project):
+        run_dbt(["seed"])
+        result = run_dbt(expect_pass=False)
+        assert "needs a `fields` config" in result.results[0].message
+
+
+class TestColumnsTableDictionary:
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {
+            "people.csv": PEOPLE_SEED_CSV,
+            "schema.yml": SEED_SCHEMA_YML,
+        }
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {
+            "columns_dictionary.sql": COLUMNS_TABLE_DICTIONARY,
+            "schema.yml": columns_dictionary_schema(),
+        }
+
+    def test_table_source_is_not_compared_with_the_query(self, project):
+        run_dbt(["seed"])
+        run_dbt()
+
+        results = project.run_sql("select distinct name from columns_dictionary", fetch="all")
+        assert set(i[0] for i in results) == set(["Dade", "Kate", "Ksenia"])
